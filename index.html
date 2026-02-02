@@ -43,6 +43,27 @@
       font-family: system-ui, sans-serif;
     }
 
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px;
+      border-bottom: 1px solid #333;
+    }
+
+    .panel-header h3 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .panel-header button {
+      background: none;
+      border: none;
+      color: #eee;
+      font-size: 20px;
+      cursor: pointer;
+    }
+
     .tile-item {
       border-bottom: 1px solid #333;
       padding: 8px;
@@ -50,8 +71,8 @@
 
     .tile-item small { color: #aaa; }
   </style>
+
   <script>
-  // --- Minimal service worker for full offline support ---
   if ('serviceWorker' in navigator) {
     try {
       const swCode = `
@@ -80,11 +101,12 @@
       const swURL = URL.createObjectURL(blob);
       navigator.serviceWorker.register(swURL);
     } catch (e) {
-      console.log('ServiceWorker registration skipped (not supported in file:// protocol)');
+      console.log('ServiceWorker skipped');
     }
   }
   </script>
 </head>
+
 <body>
 
 <div id="map"></div>
@@ -97,7 +119,6 @@
 <div class="panel" id="panel"></div>
 
 <script>
-// --- IndexedDB for tile versioning ---
 const DB_NAME = 'osm-tile-db';
 const STORE = 'tiles';
 
@@ -130,12 +151,23 @@ async function getAllTiles() {
   });
 }
 
-// --- Custom tile layer that checks cache first ---
+async function getCachedTile(z, x, y) {
+  const tiles = await getAllTiles();
+  return tiles.find(t => t.z === z && t.x === x && t.y === y);
+}
+
+function panelHeader(title) {
+  return `
+    <div class="panel-header">
+      <h3>${title}</h3>
+      <button id="closePanelBtn">×</button>
+    </div>
+  `;
+}
+
 class CachedTileLayer extends L.TileLayer {
   async _loadTile(tile, tilePoint) {
     const { z, x, y } = tilePoint;
-    
-    // Check cache first
     const cached = await getCachedTile(z, x, y);
     if (cached) {
       tile.src = URL.createObjectURL(cached.blob);
@@ -143,86 +175,44 @@ class CachedTileLayer extends L.TileLayer {
       this.fire('tileload', { tile, coords: tilePoint });
       return;
     }
-
-    // Not in cache, fetch from OSM
     super._loadTile(tile, tilePoint);
   }
-
-  async _tileOnLoad(done, tile) {
-    try {
-      // Extract z,x,y from tile src URL
-      const match = tile.src.match(/\/(\d+)\/(\d+)\/(\d+)\./);
-      if (match) {
-        const [, z, x, y] = match;
-        const z_int = parseInt(z), x_int = parseInt(x), y_int = parseInt(y);
-        
-        // Check if tile is already cached - don't save duplicate
-        const alreadyCached = await getCachedTile(z_int, x_int, y_int);
-        if (!alreadyCached) {
-          const canvas = document.createElement('canvas');
-          canvas.width = tile.naturalWidth || 256;
-          canvas.height = tile.naturalHeight || 256;
-          const ctx = canvas.getContext('2d');
-          ctx.drawImage(tile, 0, 0);
-
-          const blob = await new Promise(r => canvas.toBlob(r));
-          
-          await saveTile({
-            id: crypto.randomUUID(),
-            z: z_int, x: x_int, y: y_int,
-            bbox: tileBBox(x_int, y_int, z_int),
-            downloadedAt: new Date().toISOString(),
-            blob
-          });
-        }
-      }
-    } catch (e) {
-      console.log('Error caching tile:', e);
-    }
-
-    super._tileOnLoad(done, tile);
-  }
 }
 
-// Helper to get tile from cache
-async function getCachedTile(z, x, y) {
-  const tiles = await getAllTiles();
-  return tiles.find(t => t.z === z && t.x === x && t.y === y);
-}
-
-// --- Leaflet map ---
 const map = L.map('map').setView([39.7, -8.9], 11);
 
-const tileLayer = new CachedTileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  crossOrigin: true
-});
+const tileLayer = new CachedTileLayer(
+  'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  { maxZoom: 19, crossOrigin: true }
+);
 
 tileLayer.addTo(map);
 
-// --- Right click: show only the map tile at clicked coordinate ---
+const panel = document.getElementById('panel');
+
 map.on('contextmenu', async e => {
   panel.style.display = 'block';
+
   const { lat, lng } = e.latlng;
   const zoom = map.getZoom();
 
   const tileX = Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
   const tileY = Math.floor(
-    (1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, zoom)
+    (1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2
+    * Math.pow(2, zoom)
   );
 
   const tiles = await getAllTiles();
+  const matchingTile = tiles.filter(t => t.z === zoom && t.x === tileX && t.y === tileY);
 
-  const matchingTile = tiles.filter(t =>
-    t.z === zoom &&
-    t.x === tileX &&
-    t.y === tileY
-  );
+  panel.innerHTML = panelHeader(`Tile at z:${zoom} x:${tileX} y:${tileY}`);
 
-  panel.innerHTML = `<h3 style="padding:8px">Tile at z:${zoom} x:${tileX} y:${tileY}</h3>`;
+  document.getElementById('closePanelBtn').onclick = () => {
+    panel.style.display = 'none';
+  };
 
   if (!matchingTile.length) {
-    panel.innerHTML += '<p style="padding:8px">No cached tile at this location and zoom level.</p>';
+    panel.innerHTML += '<p style="padding:8px">No cached tile at this location.</p>';
     return;
   }
 
@@ -232,15 +222,11 @@ map.on('contextmenu', async e => {
     div.innerHTML = `
       <div>z:${t.z} x:${t.x} y:${t.y}</div>
       <small>${t.downloadedAt}</small><br>
-      <img style="margin-top:6px;border:1px solid #333;width:256px;height:256px" src="${URL.createObjectURL(t.blob)}"><br>
-      <button data-id="${t.id}" class="update">Update</button>
+      <img style="margin-top:6px;border:1px solid #333;width:256px;height:256px"
+           src="${URL.createObjectURL(t.blob)}"><br>
       <button data-id="${t.id}" class="delete">Delete</button>
     `;
     panel.appendChild(div);
-  });
-
-  panel.querySelectorAll('.update').forEach(b => {
-    b.onclick = () => updateTile(b.dataset.id);
   });
 
   panel.querySelectorAll('.delete').forEach(b => {
@@ -248,25 +234,10 @@ map.on('contextmenu', async e => {
       const db = await openDB();
       const tx = db.transaction(STORE, 'readwrite');
       tx.objectStore(STORE).delete(b.dataset.id);
-      map.fire('contextmenu', { latlng: e.latlng });
+      panel.style.display = 'none';
     };
   });
 });
-
-// --- Tile management ---
-function tileBBox(x, y, z) {
-  const n = Math.pow(2, z);
-  const lon1 = x / n * 360 - 180;
-  const lon2 = (x + 1) / n * 360 - 180;
-  const lat1 = rad2deg(Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))));
-  const lat2 = rad2deg(Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n))));
-  return { latMin: lat2, latMax: lat1, lonMin: lon1, lonMax: lon2 };
-}
-
-function rad2deg(r) { return r * 180 / Math.PI; }
-
-// --- Tile manager UI ---
-const panel = document.getElementById('panel');
 
 document.getElementById('manageBtn').onclick = async () => {
   panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
@@ -275,7 +246,11 @@ document.getElementById('manageBtn').onclick = async () => {
 
 async function renderPanel() {
   const tiles = await getAllTiles();
-  panel.innerHTML = '<h3 style="padding:8px">Cached tiles</h3>';
+  panel.innerHTML = panelHeader('Cached tiles');
+
+  document.getElementById('closePanelBtn').onclick = () => {
+    panel.style.display = 'none';
+  };
 
   tiles.forEach(t => {
     const div = document.createElement('div');
@@ -283,16 +258,11 @@ async function renderPanel() {
     div.innerHTML = `
       <div>z:${t.z} x:${t.x} y:${t.y}</div>
       <small>${t.downloadedAt}</small><br>
-      <small>bbox: ${t.bbox.latMin.toFixed(4)}, ${t.bbox.lonMin.toFixed(4)} → ${t.bbox.latMax.toFixed(4)}, ${t.bbox.lonMax.toFixed(4)}</small><br>
-      <img style="margin-top:6px;border:1px solid #333;width:256px;height:256px;object-fit:contain" src="${URL.createObjectURL(t.blob)}"><br>
-      <button data-id="${t.id}" class="update">Update</button>
+      <img style="margin-top:6px;border:1px solid #333;width:256px;height:256px"
+           src="${URL.createObjectURL(t.blob)}"><br>
       <button data-id="${t.id}" class="delete">Delete</button>
     `;
     panel.appendChild(div);
-  });
-
-  panel.querySelectorAll('.update').forEach(b => {
-    b.onclick = () => updateTile(b.dataset.id);
   });
 
   panel.querySelectorAll('.delete').forEach(b => {
@@ -305,29 +275,8 @@ async function renderPanel() {
   });
 }
 
-async function updateTile(id) {
-  const tiles = await getAllTiles();
-  const t = tiles.find(t => t.id === id);
-  if (!t) return;
-
-  const url = `https://tile.openstreetmap.org/${t.z}/${t.x}/${t.y}.png`;
-  const res = await fetch(url);
-  const blob = await res.blob();
-
-  await saveTile({
-    ...t,
-    id: crypto.randomUUID(),
-    blob,
-    downloadedAt: new Date().toISOString()
-  });
-
-  renderPanel();
-}
-
-// --- GPS live tracking ---
 let watchId = null;
 const gpsBtn = document.getElementById('gpsBtn');
-
 const marker = L.circleMarker([0,0], { radius: 6, color: 'red' });
 
 gpsBtn.onclick = () => {
