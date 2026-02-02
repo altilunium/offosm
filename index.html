@@ -4,7 +4,8 @@
   <meta charset="utf-8" />
   <title>Offline OSM Tile Manager</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
+  <link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#111111">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -53,36 +54,11 @@
   <script>
   // --- Minimal service worker for full offline support ---
   if ('serviceWorker' in navigator) {
-    try {
-      const swCode = `
-        const CACHE = 'osm-offline-v1';
-        const CORE = [
-          'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
-          'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'
-        ];
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js');
+  });
+}
 
-        self.addEventListener('install', e => {
-          e.waitUntil(caches.open(CACHE).then(c => c.addAll(CORE)));
-        });
-
-        self.addEventListener('fetch', e => {
-          e.respondWith(
-            caches.match(e.request).then(r => r || fetch(e.request).then(res => {
-              const copy = res.clone();
-              caches.open(CACHE).then(c => c.put(e.request, copy));
-              return res;
-            }).catch(() => r))
-          );
-        });
-      `;
-
-      const blob = new Blob([swCode], { type: 'text/javascript' });
-      const swURL = URL.createObjectURL(blob);
-      navigator.serviceWorker.register(swURL);
-    } catch (e) {
-      console.log('ServiceWorker registration skipped (not supported in file:// protocol)');
-    }
-  }
   </script>
 </head>
 <body>
@@ -191,7 +167,7 @@ async function getCachedTile(z, x, y) {
 }
 
 // --- Leaflet map ---
-const map = L.map('map').setView([39.7, -8.9], 11);
+const map = L.map('map').setView([0, 0], 1);
 
 const tileLayer = new CachedTileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
@@ -231,7 +207,7 @@ map.on('contextmenu', async e => {
     div.className = 'tile-item';
     div.innerHTML = `
       <div>z:${t.z} x:${t.x} y:${t.y}</div>
-      <small>${t.downloadedAt}</small><br>
+      <small>${toRelativeTime(t.downloadedAt)}</small><br>
       <img style="margin-top:6px;border:1px solid #333;width:256px;height:256px" src="${URL.createObjectURL(t.blob)}"><br>
       <button data-id="${t.id}" class="update">Update</button>
       <button data-id="${t.id}" class="delete">Delete</button>
@@ -273,6 +249,39 @@ document.getElementById('manageBtn').onclick = async () => {
   if (panel.style.display === 'block') renderPanel();
 };
 
+document.getElementById('panel').onclick = async () => {
+  panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+  
+};
+
+function toRelativeTime(isoString, locale = navigator.language) {
+  const date = new Date(isoString);
+  const now = new Date();
+
+  const diffMs = date - now;
+  const diffSec = Math.round(diffMs / 1000);
+
+  const rtf = new Intl.RelativeTimeFormat(locale, { numeric: "auto" });
+
+  const units = [
+    { name: "year",   seconds: 31536000 },
+    { name: "month",  seconds: 2592000 },
+    { name: "day",    seconds: 86400 },
+    { name: "hour",   seconds: 3600 },
+    { name: "minute", seconds: 60 },
+    { name: "second", seconds: 1 }
+  ];
+
+  for (const unit of units) {
+    const value = Math.trunc(diffSec / unit.seconds);
+    if (Math.abs(value) >= 1) {
+      return rtf.format(value, unit.name);
+    }
+  }
+
+  return rtf.format(0, "second");
+}
+
 async function renderPanel() {
   const tiles = await getAllTiles();
   panel.innerHTML = '<h3 style="padding:8px">Cached tiles</h3>';
@@ -282,7 +291,7 @@ async function renderPanel() {
     div.className = 'tile-item';
     div.innerHTML = `
       <div>z:${t.z} x:${t.x} y:${t.y}</div>
-      <small>${t.downloadedAt}</small><br>
+      <small>${toRelativeTime(t.downloadedAt)}</small><br>
       <small>bbox: ${t.bbox.latMin.toFixed(4)}, ${t.bbox.lonMin.toFixed(4)} → ${t.bbox.latMax.toFixed(4)}, ${t.bbox.lonMax.toFixed(4)}</small><br>
       <img style="margin-top:6px;border:1px solid #333;width:256px;height:256px;object-fit:contain" src="${URL.createObjectURL(t.blob)}"><br>
       <button data-id="${t.id}" class="update">Update</button>
