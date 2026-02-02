@@ -72,6 +72,19 @@
 
 <div class="panel" id="panel"></div>
 
+<div id="toast" style="
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 8px 12px;
+  background: rgba(0,0,0,0.8);
+  color: #fff;
+  font-size: 13px;
+  border-radius: 4px;
+  display: none;
+  z-index: 9999;
+"></div>
+
 <script>
 // --- IndexedDB for tile versioning ---
 const DB_NAME = 'osm-tile-db';
@@ -96,7 +109,20 @@ async function saveTile(tile) {
   tx.objectStore(STORE).put(tile);
 }
 
+function showToast(message) {
+  const toast = document.getElementById('toast');
+  toast.textContent = message;
+  toast.style.display = 'block';
+}
+
+function hideToast() {
+  const toast = document.getElementById('toast');
+  toast.style.display = 'none';
+}
+
 async function getAllTiles() {
+  showToast('Loading tiles…');
+  try {
   const db = await openDB();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, 'readonly');
@@ -104,6 +130,11 @@ async function getAllTiles() {
     req.onsuccess = () => resolve(req.result || []);
     req.onerror = () => reject(req.error);
   });
+  } finally {
+    hideToast();
+  }
+
+
 }
 
 // --- Custom tile layer that checks cache first ---
@@ -167,7 +198,7 @@ async function getCachedTile(z, x, y) {
 }
 
 // --- Leaflet map ---
-const map = L.map('map').setView([0, 0], 1);
+const map = L.map('map').setView([0, 0], 2);
 
 const tileLayer = new CachedTileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
@@ -196,7 +227,23 @@ map.on('contextmenu', async e => {
     t.y === tileY
   );
 
-  panel.innerHTML = `<h3 style="padding:8px">Tile at z:${zoom} x:${tileX} y:${tileY}</h3>`;
+  panel.innerHTML = `<h3 style="padding:8px">Tile at z:${zoom} x:${tileX} y:${tileY}</h3>
+
+  <button id="closePanel" style="
+          border:none;
+          background:transparent;
+          font-size:36px;
+          cursor:pointer;
+          line-height:1;
+          position:absolute;right:20px;color:white;
+          top:5px;
+        ">×</button>  
+
+`;
+
+panel.querySelector('#closePanel').onclick = () => {
+    panel.style.display = 'none';
+  };
 
   if (!matchingTile.length) {
     panel.innerHTML += '<p style="padding:8px">No cached tile at this location and zoom level.</p>';
@@ -250,10 +297,12 @@ document.getElementById('manageBtn').onclick = async () => {
   if (panel.style.display === 'block') renderPanel();
 };
 
+/*
 document.getElementById('panel').onclick = async () => {
   panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
   
 };
+*/
 
 function toRelativeTime(isoString, locale = navigator.language) {
   const date = new Date(isoString);
@@ -283,17 +332,87 @@ function toRelativeTime(isoString, locale = navigator.language) {
   return rtf.format(0, "second");
 }
 
+
+
+
+let currentZoomFilter = '1';
+
 async function renderPanel() {
   const tiles = await getAllTiles();
-  panel.innerHTML = '<h3 style="padding:8px">Cached tiles</h3>';
+  const tileCount = tiles.length;
+  const totalBytes = tiles.reduce((sum, t) => {
+      return sum + (t.blob ? t.blob.size : 0);
+    }, 0);
+  const totalMB = (totalBytes / (1024 * 1024)).toFixed(2);
+  const zoomLevels = [...new Set(tiles.map(t => t.z))].sort((a, b) => a - b);
+  const filteredTiles = currentZoomFilter === 'all'
+      ? tiles
+      : tiles.filter(t => t.z === Number(currentZoomFilter));
+  const tileCountX = filteredTiles.length;
+  let totalMBX = filteredTiles.reduce((sum, t) => {
+      return sum + (t.blob ? t.blob.size : 0);
+    }, 0);
+  totalMBX = (totalMBX / (1024 * 1024)).toFixed(2);
 
-  tiles.forEach(t => {
+
+  panel.innerHTML = `<h3 style="padding:8px">Cached tiles<br>${tileCount} tiles · ${totalMB} MB</h3>
+  <div style="padding:8px">
+          <label>
+            Zoom:
+            <select id="zoomFilter">
+              ${zoomLevels.map(z =>
+                `<option value="${z}" ${String(z) === currentZoomFilter ? 'selected' : ''}>
+                  z=${z}
+                </option>`
+              ).join('')}
+            </select>
+            <br>${tileCountX} tiles · ${totalMBX} MB    
+          </label>
+
+
+         <div id="miniMap"
+                  style="margin-top:8px;height:140px;border:1px solid #444;display:none">
+             </div>       
+
+
+        </div>
+   <button id="closePanel" style="
+           border:none;
+           background:transparent;
+           font-size:36px;
+           cursor:pointer;
+           line-height:1;
+           position:absolute;right:20px;color:white;
+           top:5px;
+         ">×</button>             
+`;
+
+panel.querySelector('#closePanel').onclick = () => {
+    panel.style.display = 'none';
+  };
+
+  const zoomSelect = panel.querySelector('#zoomFilter');
+    zoomSelect.onchange = () => {
+      currentZoomFilter = zoomSelect.value;
+      renderPanel();
+    };
+
+  filteredTiles.forEach(t => {
     const div = document.createElement('div');
     div.className = 'tile-item';
     div.innerHTML = `
       <div>z:${t.z} x:${t.x} y:${t.y}</div>
       <small>${toRelativeTime(t.downloadedAt)}</small><br>
-      <small>bbox: ${t.bbox.latMin.toFixed(4)}, ${t.bbox.lonMin.toFixed(4)} → ${t.bbox.latMax.toFixed(4)}, ${t.bbox.lonMax.toFixed(4)}</small><br>
+      <small
+          class="bbox-link"
+          data-latmin="${t.bbox.latMin}"
+          data-lonmin="${t.bbox.lonMin}"
+          data-latmax="${t.bbox.latMax}"
+          data-lonmax="${t.bbox.lonMax}"
+          data-zoom="${t.z}"
+          style="cursor:pointer;text-decoration:underline"
+        >
+      bbox: ${t.bbox.latMin.toFixed(4)}, ${t.bbox.lonMin.toFixed(4)} → ${t.bbox.latMax.toFixed(4)}, ${t.bbox.lonMax.toFixed(4)}</small><br>
       <img style="margin-top:6px;border:1px solid #333;width:256px;height:256px;object-fit:contain" src="${URL.createObjectURL(t.blob)}"><br>
       <button data-id="${t.id}" class="update">Update</button>
       <button data-id="${t.id}" class="delete">Delete</button>
@@ -313,6 +432,67 @@ async function renderPanel() {
       renderPanel();
     };
   });
+
+
+  panel.querySelectorAll('.bbox-link').forEach(el => {
+    el.onclick = () => {
+      const latMin = Number(el.dataset.latmin);
+      const lonMin = Number(el.dataset.lonmin);
+      const latMax = Number(el.dataset.latmax);
+      const lonMax = Number(el.dataset.lonmax);
+      const zoom = Number(el.dataset.zoom);
+
+      const centerLat = (latMin + latMax) / 2;
+      const centerLon = (lonMin + lonMax) / 2;
+
+      map.setView([centerLat, centerLon], zoom);
+    };
+  });
+
+  const miniMapDiv = panel.querySelector('#miniMap');
+
+  if (currentZoomFilter !== 'all' && filteredTiles.length) {
+    miniMapDiv.style.display = 'block';
+    miniMapDiv.innerHTML = '';
+
+    const miniMap = L.map(miniMapDiv, {
+      attributionControl: false,
+      zoomControl: false,
+      dragging: false,
+      scrollWheelZoom: false,
+      doubleClickZoom: false,
+      boxZoom: false,
+      keyboard: false
+    });
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19
+    }).addTo(miniMap);
+
+    const bounds = [];
+
+    filteredTiles.forEach(t => {
+      const b = [
+        [t.bbox.latMin, t.bbox.lonMin],
+        [t.bbox.latMax, t.bbox.lonMax]
+      ];
+
+      bounds.push(b[0], b[1]);
+
+      L.rectangle(b, {
+        color: 'red',
+        weight: 1,
+        fillOpacity: 0.35
+      }).addTo(miniMap);
+    });
+
+    miniMap.fitBounds(bounds, { padding: [5, 5] });
+  } else {
+    miniMapDiv.style.display = 'none';
+  }
+
+
+
 }
 
 async function updateTile(id) {
@@ -360,4 +540,3 @@ gpsBtn.onclick = () => {
 
 </body>
 </html>
-
