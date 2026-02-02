@@ -1,4 +1,4 @@
-const CACHE = 'osm-offline-v2';
+const CACHE = 'osm-offline-v3';
 
 const CORE = [
   './',
