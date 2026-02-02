@@ -16,4 +16,5 @@ Use the “manage tiles” button (or right-click / long-press on a coordinate p
 
 
 # Development Blog
+* v26.2.3 - [Minimap × Statistics × Teleport](https://github.com/altilunium/offosm/wiki/v26.2.3-%E2%80%90-Minimap-%C3%97-Statistics-%C3%97-Teleport)
 * v26.2.2 - [Offosm : OSM that you can access while you’re offline](https://www.openstreetmap.org/user/rphyrin/diary/408186)
