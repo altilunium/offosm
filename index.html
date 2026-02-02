@@ -171,6 +171,7 @@ const map = L.map('map').setView([0, 0], 1);
 
 const tileLayer = new CachedTileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors',
   crossOrigin: true
 });
 
@@ -359,3 +360,4 @@ gpsBtn.onclick = () => {
 
 </body>
 </html>
+
